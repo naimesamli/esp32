@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rastgele Veri İzleme Paneli</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script>
+        var csrf_token = '{{ csrf_token }}';
+    </script>
+    <script>
+        $.ajax({
+            url: '/api/start-serial/',
+            method: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                port: $('#port').val(),
+                baud_rate: parseInt($('#baud-rate').val())
+            }),
+            headers: {
+                'X-CSRFToken': csrf_token
+            },
+            success: function(response) {
+                alert(response.status);
+                location.reload();
+            },
+            error: function(error) {
+                console.error('Hata:', error);
+                alert('Hata: ' + JSON.stringify(error.responseJSON));
+            }
+        });
+    </script>
+
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css">
+    <style>
+        body {
+            padding-top: 20px;
+        }
+        .data-container {
+            margin-top: 30px;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 30px;
+        }
+        .status-indicator {
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            margin-bottom: 20px;
+        }
+        .table-container {
+            margin-top: 30px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Rastgele Veri İzleme Paneli</h1>
+        
+        <div class="status-indicator">
+            <h5>Durum: <span id="connection-status">{{ connection_status }}</span></h5>
+        </div>
+        
+        <script>
+            $('#serial-form').submit(function(e) {
+                e.preventDefault();
+        
+                const port = $('#port').val();
+                const baudRate = $('#baud-rate').val();
+        
+                $.ajax({
+                    url: '/api/start-serial/',
+                    method: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        port: port,
+                        baud_rate: parseInt(baudRate)
+                    }),
+                    success: function(response) {
+
+                        alert(response.status);
+
+                        location.reload();
+                    },
+                    error: function(error) {
+                        alert('Hata: ' + JSON.stringify(error.responseJSON));
+                    }
+                });
+            });
+        </script>
+        
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Seri Port Veri Toplama</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="serial-form">
+                            <div class="mb-3">
+                                <label for="port" class="form-label">Port</label>
+                                <input type="text" class="form-control" id="port" value="COM3">
+                            </div>
+                            <div class="mb-3">
+                                <label for="baud-rate" class="form-label">Baud Rate</label>
+                                <input type="number" class="form-control" id="baud-rate" value="115200">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Seri Port Veri Toplamayı Başlat/Durdur</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Rastgele Veri Üretme</h5>
+                    </div>
+                    <div class="card-body">
+                        <p>Rastgele ADC değerleri üreterek veritabanına kaydet (5 saniyede bir).</p>
+                        <button id="random-btn" class="btn btn-success">Rastgele Veri Üretmeyi Başlat/Durdur</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="data-container">
+            <h2>Veri Analizi</h2>
+            
+            <div class="chart-container">
+                <canvas id="dataChart"></canvas>
+            </div>
+            
+            <div class="summary card mb-4">
+                <div class="card-header">
+                    <h5>Özet İstatistikler</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="card text-center mb-3">
+                                <div class="card-body">
+                                    <h5>Son ADC Değeri</h5>
+                                    <h2 id="last-adc">-</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card text-center mb-3">
+                                <div class="card-body">
+                                    <h5>Ortalama ADC</h5>
+                                    <h2 id="avg-adc">-</h2>
+                                </div>
+                            </div>
+                        </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="table-container">
+                <h3>Son Veriler</h3>
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>ADC Değeri</th>
+                            <th>Zaman</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table">
+                        {% for data in latest_data %}
+                        <tr>
+                            <td>{{ data.id }}</td>
+                            <td>{{ data.adc_value }}</td>
+                            <td>{{ data.timestamp }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center">Henüz veri yok</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chart;
+        const chartLabels = [];
+        const adcData = [];
+        
+
+        function createChart() {
+            const ctx = document.getElementById('dataChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartLabels,
+                    datasets: [
+                        {
+                            label: 'ADC Değeri',
+                            data: adcData,
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1,
+                            yAxisID: 'y'
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Zaman'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'ADC Değeri'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Kapasite (nF)'
+                            },
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+
+        function updateData() {
+            $.ajax({
+                url: '/api/capacitor-data/',
+                method: 'GET',
+                success: function(response) {
+
+                    const latestData = response.reverse().slice(0, 50).reverse();
+                    
+
+                    const tableBody = $('#data-table');
+                    tableBody.empty();
+                    
+                    let sumAdc = 0;
+                    
+                    latestData.forEach(function(data) {
+                        const date = new Date(data.timestamp);
+                        const formattedDate = date.toLocaleString();
+                        
+                        tableBody.append(`
+                            <tr>
+                                <td>${data.id}</td>
+                                <td>${data.adc_value}</td>
+                                <td>${formattedDate}</td>
+                            </tr>
+                        `);
+                        
+                        sumAdc += data.adc_value;
+                    });
+                    
+
+                    chartLabels.length = 0;
+                    adcData.length = 0;
+                    
+                    latestData.forEach(function(data) {
+                        const date = new Date(data.timestamp);
+                        chartLabels.push(date.toLocaleTimeString());
+                        adcData.push(data.adc_value);
+
+                    });
+                    
+                    if (chart) {
+                        chart.update();
+                    } else {
+                        createChart();
+                    }
+                    
+
+                    if (latestData.length > 0) {
+                        const lastData = latestData[latestData.length - 1];
+                        $('#last-adc').text(lastData.adc_value);
+                        
+                        const avgAdc = (sumAdc / latestData.length).toFixed(2);
+                        
+                        $('#avg-adc').text(avgAdc);
+                    }
+                },
+                error: function(error) {
+                    console.error('Veri alınamadı:', error);
+                }
+            });
+        }
+        
+
+        $('#serial-form').submit(function(e) {
+            e.preventDefault();
+            
+            const port = $('#port').val();
+            const baudRate = $('#baud-rate').val();
+            
+            $.ajax({
+                url: '/api/start-serial/',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    port: port,
+                    baud_rate: parseInt(baudRate)
+                }),
+                success: function(response) {
+                    alert(response.status);
+                    location.reload();
+                },
+                error: function(error) {
+                    alert('Hata: ' + JSON.stringify(error.responseJSON));
+                }
+            });
+        });
+        
+
+        $('#random-btn').click(function() {
+            $.ajax({
+                url: '/api/start-random/',
+                method: 'POST',
+                success: function(response) {
+                    alert(response.status);
+                    location.reload();
+                },
+                error: function(error) {
+                    alert('Hata: ' + JSON.stringify(error));
+                }
+            });
+        });
+        
+
+        $(document).ready(function() {
+
+            updateData();
+            
+            setInterval(updateData, 5000);
+        });
+    </script>
+    
+</body>
+</html>
