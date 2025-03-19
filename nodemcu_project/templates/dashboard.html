@@ -3,35 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rastgele Veri İzleme Paneli</title>
+    <title>Kapasitör Veri İzleme Paneli</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-    <script>
-        var csrf_token = '{{ csrf_token }}';
-    </script>
-    <script>
-        $.ajax({
-            url: '/api/start-serial/',
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({
-                port: $('#port').val(),
-                baud_rate: parseInt($('#baud-rate').val())
-            }),
-            headers: {
-                'X-CSRFToken': csrf_token
-            },
-            success: function(response) {
-                alert(response.status);
-                location.reload();
-            },
-            error: function(error) {
-                console.error('Hata:', error);
-                alert('Hata: ' + JSON.stringify(error.responseJSON));
-            }
-        });
-    </script>
-
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css">
     <style>
@@ -57,61 +30,42 @@
             max-height: 400px;
             overflow-y: auto;
         }
+        .active-collection {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+        }
+        .inactive-collection {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1 class="text-center mb-4">Rastgele Veri İzleme Paneli</h1>
+        <h1 class="text-center mb-4">Kapasitör Veri İzleme Paneli</h1>
         
-        <div class="status-indicator">
-            <h5>Durum: <span id="connection-status">{{ connection_status }}</span></h5>
+        <div class="status-indicator" id="status-box">
+            <h5>Durum: <span id="connection-status">Bağlantı yok</span></h5>
         </div>
-        
-        <script>
-            $('#serial-form').submit(function(e) {
-                e.preventDefault();
-        
-                const port = $('#port').val();
-                const baudRate = $('#baud-rate').val();
-        
-                $.ajax({
-                    url: '/api/start-serial/',
-                    method: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({
-                        port: port,
-                        baud_rate: parseInt(baudRate)
-                    }),
-                    success: function(response) {
-
-                        alert(response.status);
-
-                        location.reload();
-                    },
-                    error: function(error) {
-                        alert('Hata: ' + JSON.stringify(error.responseJSON));
-                    }
-                });
-            });
-        </script>
         
         <div class="row mb-4">
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-header">
-                        <h5>Seri Port Veri Toplama</h5>
+                        <h5>API Veri Bağlantısı</h5>
                     </div>
                     <div class="card-body">
-                        <form id="serial-form">
+                        <form id="api-form">
                             <div class="mb-3">
-                                <label for="port" class="form-label">Port</label>
-                                <input type="text" class="form-control" id="port" value="COM3">
+                                <label for="api-url" class="form-label">API URL</label>
+                                <input type="text" class="form-control" id="api-url" value="/api/capacitor-data/">
                             </div>
                             <div class="mb-3">
-                                <label for="baud-rate" class="form-label">Baud Rate</label>
-                                <input type="number" class="form-control" id="baud-rate" value="115200">
+                                <label for="update-interval" class="form-label">Güncelleme Aralığı (ms)</label>
+                                <input type="number" class="form-control" id="update-interval" value="2000">
                             </div>
-                            <button type="submit" class="btn btn-primary">Seri Port Veri Toplamayı Başlat/Durdur</button>
+                            <button type="button" id="start-api-btn" class="btn btn-primary">API'ye bağlan</button>
+                            <button type="button" id="stop-api-btn" class="btn btn-danger">API bağlantısını durdur</button>
                         </form>
                     </div>
                 </div>
@@ -122,8 +76,9 @@
                         <h5>Rastgele Veri Üretme</h5>
                     </div>
                     <div class="card-body">
-                        <p>Rastgele ADC değerleri üreterek veritabanına kaydet (5 saniyede bir).</p>
-                        <button id="random-btn" class="btn btn-success">Rastgele Veri Üretmeyi Başlat/Durdur</button>
+                        <p>Rastgele ADC değerleri üreterek veritabanına kaydet (API aracılığıyla).</p>
+                        <button id="start-random-btn" class="btn btn-success">Rastgele Veri Üretmeyi Başlat</button>
+                        <button id="stop-random-btn" class="btn btn-danger">Rastgele Veri Üretmeyi Durdur</button>
                     </div>
                 </div>
             </div>
@@ -158,7 +113,7 @@
                                 </div>
                             </div>
                         </div>
-                        </div>
+
                     </div>
                 </div>
             </div>
@@ -174,17 +129,7 @@
                         </tr>
                     </thead>
                     <tbody id="data-table">
-                        {% for data in latest_data %}
-                        <tr>
-                            <td>{{ data.id }}</td>
-                            <td>{{ data.adc_value }}</td>
-                            <td>{{ data.timestamp }}</td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="4" class="text-center">Henüz veri yok</td>
-                        </tr>
-                        {% endfor %}
+
                     </tbody>
                 </table>
             </div>
@@ -192,11 +137,20 @@
     </div>
 
     <script>
+        // CSRF token alıyoruz
+        var csrf_token = '{{ csrf_token }}';
+        
+        // Grafik için değişkenler
         let chart;
         const chartLabels = [];
         const adcData = [];
         
-
+        // Veri toplama durumu
+        let isCollectingData = false;
+        let dataCollectionInterval = null;
+        let updateIntervalMs = 2000;
+        
+        // Grafik oluşturma fonksiyonu
         function createChart() {
             const ctx = document.getElementById('dataChart').getContext('2d');
             chart = new Chart(ctx, {
@@ -248,118 +202,225 @@
                 }
             });
         }
-        
-
-        function updateData() {
+        $(document).ready(function() {
+            // Durumu kontrol et
             $.ajax({
-                url: '/api/capacitor-data/',
+                url: '/api/status/',
                 method: 'GET',
                 success: function(response) {
-
-                    const latestData = response.reverse().slice(0, 50).reverse();
-                    
-
-                    const tableBody = $('#data-table');
-                    tableBody.empty();
-                    
-                    let sumAdc = 0;
-                    
-                    latestData.forEach(function(data) {
-                        const date = new Date(data.timestamp);
-                        const formattedDate = date.toLocaleString();
+                    if (response.is_collecting) {
+                        $('#connection-status').text(response.status || 'Veri toplanıyor');
+                        $('#status-box').removeClass('inactive-collection').addClass('active-collection');
                         
-                        tableBody.append(`
-                            <tr>
-                                <td>${data.id}</td>
-                                <td>${data.adc_value}</td>
-                                <td>${formattedDate}</td>
-                            </tr>
-                        `);
-                        
-                        sumAdc += data.adc_value;
-                    });
-                    
-
-                    chartLabels.length = 0;
-                    adcData.length = 0;
-                    
-                    latestData.forEach(function(data) {
-                        const date = new Date(data.timestamp);
-                        chartLabels.push(date.toLocaleTimeString());
-                        adcData.push(data.adc_value);
-
-                    });
-                    
-                    if (chart) {
-                        chart.update();
+                        // Veri toplama başlat
+                        $('#start-api-btn').click();
                     } else {
-                        createChart();
-                    }
-                    
-
-                    if (latestData.length > 0) {
-                        const lastData = latestData[latestData.length - 1];
-                        $('#last-adc').text(lastData.adc_value);
-                        
-                        const avgAdc = (sumAdc / latestData.length).toFixed(2);
-                        
-                        $('#avg-adc').text(avgAdc);
+                        $('#connection-status').text(response.status || 'Veri toplama durduruldu');
+                        $('#status-box').removeClass('active-collection').addClass('inactive-collection');
                     }
                 },
-                error: function(error) {
-                    console.error('Veri alınamadı:', error);
-                }
-            });
-        }
-        
-
-        $('#serial-form').submit(function(e) {
-            e.preventDefault();
-            
-            const port = $('#port').val();
-            const baudRate = $('#baud-rate').val();
-            
-            $.ajax({
-                url: '/api/start-serial/',
-                method: 'POST',
-                contentType: 'application/json',
-                data: JSON.stringify({
-                    port: port,
-                    baud_rate: parseInt(baudRate)
-                }),
-                success: function(response) {
-                    alert(response.status);
-                    location.reload();
-                },
-                error: function(error) {
-                    alert('Hata: ' + JSON.stringify(error.responseJSON));
+                error: function() {
+                    $('#connection-status').text('Bağlantı yok');
+                    $('#status-box').removeClass('active-collection').addClass('inactive-collection');
                 }
             });
         });
+        // Verileri güncelleme fonksiyonu
+// Verileri güncelleme fonksiyonu
+function updateData() {
+    const apiUrl = $('#api-url').val();
+    
+    $.ajax({
+        url: apiUrl,
+        method: 'GET',
+        success: function(response) {
+            // API'den dönen veri türünü kontrol edelim
+            console.log("API yanıtı:", response);
+            
+            // Veri dizisini doğru şekilde alalım
+            let dataArray = response;
+            if (!Array.isArray(dataArray)) {
+                if (dataArray.results && Array.isArray(dataArray.results)) {
+                    dataArray = dataArray.results;
+                } else {
+                    console.error("API'den dönen veri bir dizi değil:", dataArray);
+                    return;
+                }
+            }
+            
+            // Veri yoksa işlemi sonlandır
+            if (dataArray.length === 0) {
+                $('#data-table').html('<tr><td colspan="3" class="text-center">Henüz veri yok</td></tr>');
+                $('#last-adc').text("-");
+                $('#avg-adc').text("-");
+                return;
+            }
+            
+            // En son 50 veriyi alıyoruz
+            const latestData = dataArray.slice(0, 50);
+            
+            // Verileri en son kaydedilen en üstte olacak şekilde sıralıyoruz
+            latestData.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            
+            // Tablo verilerini güncellemeden önce temizliyoruz
+            const tableBody = $('#data-table');
+            tableBody.empty();
+            
+            let sumAdc = 0;
+            
+            latestData.forEach(function(data) {
+                const date = new Date(data.timestamp);
+                const formattedDate = date.toLocaleString();
+                
+                // ADC değerini sayıya çevirme
+                const adcValue = typeof data.adc_value === 'string' ? 
+                    parseInt(data.adc_value) : data.adc_value;
+                
+                sumAdc += adcValue;
+                
+                tableBody.append(`
+                    <tr>
+                        <td>${data.id}</td>
+                        <td>${adcValue}</td>
+                        <td>${formattedDate}</td>
+                    </tr>
+                `);
+            });
+            
+            // Grafik verilerini güncelleyelim
+            // Önce grafik verilerini temizleyelim
+            chartLabels.length = 0;
+            adcData.length = 0;
+            
+            // Grafik için verileri zaman sıralamasına göre düzenleyelim (eski -> yeni)
+            const sortedData = [...latestData].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            
+            sortedData.forEach(function(data) {
+                const date = new Date(data.timestamp);
+                chartLabels.push(date.toLocaleTimeString());
+                
+                // ADC değerini sayıya çevirme
+                const adcValue = typeof data.adc_value === 'string' ? 
+                    parseInt(data.adc_value) : data.adc_value;
+                
+                adcData.push(adcValue);
+            });
+            
+            // Grafiği güncelle veya oluştur
+            if (chart) {
+                chart.update();
+            } else {
+                createChart();
+            }
+            
+            // İstatistik panellerini güncelle
+            if (latestData.length > 0) {
+                const lastData = latestData[0]; // En son veri
+                
+                // ADC değerini sayıya çevirme
+                const lastAdcValue = typeof lastData.adc_value === 'string' ? 
+                    parseInt(lastData.adc_value) : lastData.adc_value;
+                
+                $('#last-adc').text(lastAdcValue);
+                
+                const avgAdc = (sumAdc / latestData.length).toFixed(2);
+                $('#avg-adc').text(avgAdc);
+            }
+        },
+        error: function(error) {
+            console.error('Veri alınamadı:', error);
+            $('#connection-status').text('Veri alınamadı: ' + error.statusText);
+            $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+        }
+    });
+}
         
-
-        $('#random-btn').click(function() {
+        // API veri toplamayı başlat
+        $('#start-api-btn').click(function() {
+            if (isCollectingData) {
+                alert('Veri toplama zaten devam ediyor!');
+                return;
+            }
+            
+            // Güncelleme aralığını al
+            updateIntervalMs = parseInt($('#update-interval').val());
+            
+            // İlk veri güncellemesini yap
+            updateData();
+            
+            // Periyodik güncelleme için interval başlat
+            dataCollectionInterval = setInterval(updateData, updateIntervalMs);
+            
+            // Durum değişkenini güncelle
+            isCollectingData = true;
+            
+            // Durum göstergesini güncelle
+            $('#connection-status').text('API üzerinden veri toplanıyor');
+            $('#status-box').removeClass('inactive-collection').addClass('active-collection');
+        });
+        
+        // API veri toplamayı durdur
+        $('#stop-api-btn').click(function() {
+            if (!isCollectingData) {
+                alert('Veri toplama zaten durdurulmuş!');
+                return;
+            }
+            
+            // Interval'i temizle
+            clearInterval(dataCollectionInterval);
+            
+            // Durum değişkenini güncelle
+            isCollectingData = false;
+            
+            // Durum göstergesini güncelle
+            $('#connection-status').text('Veri toplama durduruldu');
+            $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+        });
+        
+        // Rastgele veri üretmeyi başlat
+        $('#start-random-btn').click(function() {
             $.ajax({
                 url: '/api/start-random/',
                 method: 'POST',
+                headers: { 'X-CSRFToken': csrf_token },
                 success: function(response) {
-                    alert(response.status);
-                    location.reload();
+                    alert(response.status || 'Rastgele veri üretimi başlatıldı');
+                    $('#connection-status').text('Rastgele veri üretiliyor');
+                    $('#status-box').removeClass('inactive-collection').addClass('active-collection');
+                    
+                    // Eğer veri toplama aktif değilse, başlat
+                    if (!isCollectingData) {
+                        $('#start-api-btn').click();
+                    }
                 },
                 error: function(error) {
-                    alert('Hata: ' + JSON.stringify(error));
+                    console.error('Hata:', error);
+                    alert('Hata: ' + (error.responseJSON ? JSON.stringify(error.responseJSON) : error.statusText));
                 }
             });
         });
         
-
-        $(document).ready(function() {
-
-            updateData();
-            
-            setInterval(updateData, 5000);
+        // Rastgele veri üretmeyi durdur
+        $('#stop-random-btn').click(function() {
+            $.ajax({
+                url: '/api/stop-random/',
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf_token },
+                success: function(response) {
+                    alert(response.status || 'Rastgele veri üretimi durduruldu');
+                    $('#connection-status').text('Rastgele veri üretimi durduruldu');
+                    $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+                },
+                error: function(error) {
+                    console.error('Hata:', error);
+                    alert('Hata: ' + (error.responseJSON ? JSON.stringify(error.responseJSON) : error.statusText));
+                }
+            });
         });
+        
+        // Sayfa yüklendiğinde çalışacak kod
+        
     </script>
-    
+</div>
 </body>
 </html>
