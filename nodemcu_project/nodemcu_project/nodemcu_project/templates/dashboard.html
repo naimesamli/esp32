@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kapasitör Veri İzleme Paneli</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 20px;
+        }
+        .data-container {
+            margin-top: 30px;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin-bottom: 30px;
+        }
+        .status-indicator {
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #f8f9fa;
+            margin-bottom: 20px;
+        }
+        .table-container {
+            margin-top: 30px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .active-collection {
+            background-color: #d4edda;
+            border-color: #c3e6cb;
+        }
+        .inactive-collection {
+            background-color: #f8d7da;
+            border-color: #f5c6cb;
+        }
+        .control-buttons {
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center mb-4">Kapasitör Veri İzleme Paneli</h1>
+        
+        <div class="status-indicator" id="status-box">
+            <h5>Durum: <span id="connection-status">Bağlantı yok</span></h5>
+        </div>
+
+        <div class="control-buttons text-center">
+            <button id="startButton" class="btn btn-success" onclick="controlData('start')">Başlat</button>
+            <button id="stopButton" class="btn btn-danger" onclick="controlData('stop')">Durdur</button>
+            <button id="logoutButton" class="btn btn-danger" onclick="window.location.href='{% url 'logout' %}'">Çıkış Yap</button>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>API Veri Bağlantısı</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="api-form">
+                            <div class="mb-3">
+                                <label for="api-url" class="form-label">API URL</label>
+                                <input type="text" class="form-control" id="api-url" value="/api/capacitor-data/">
+                            </div>
+                            <div class="mb-3">
+                                <label for="update-interval" class="form-label">Güncelleme Aralığı (ms)</label>
+                                <input type="number" class="form-control" id="update-interval" value="2000">
+                            </div>
+                            <button type="button" id="start-api-btn" class="btn btn-primary">API'ye bağlan</button>
+                            <button type="button" id="stop-api-btn" class="btn btn-danger">API bağlantısını durdur</button>
+                        </form>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+        
+        <div class="data-container">
+            <h2>Veri Analizi</h2>
+            
+            <div class="chart-container">
+                <canvas id="dataChart"></canvas>
+            </div>
+            
+            <div class="summary card mb-4">
+                <div class="card-header">
+                    <h5>Özet İstatistikler</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="card text-center mb-3">
+                                <div class="card-body">
+                                    <h5>Son ADC Değeri</h5>
+                                    <h2 id="last-adc">-</h2>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="card text-center mb-3">
+                                <div class="card-body">
+                                    <h5>Ortalama ADC</h5>
+                                    <h2 id="avg-adc">-</h2>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+            
+            <div class="table-container">
+                <h3>Son Veriler</h3>
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>ADC Değeri</th>
+                            <th>Zaman</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table">
+
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CSRF token alıyoruz
+        var csrf_token = '{{ csrf_token }}';
+        
+        // Grafik için değişkenler
+        let chart;
+        const chartLabels = [];
+        const adcData = [];
+        
+        // Veri toplama durumu
+        let isCollectingData = false;
+        let dataCollectionInterval = null;
+        let updateIntervalMs = 2000;
+        
+        function controlData(action) {
+            fetch('/api/control/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrf_token // Burada csrf_token'ı doğru şekilde ekliyoruz
+                },
+                body: JSON.stringify({ action: action })
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log("Durum:", data);
+                if (action === 'start') {
+                    $('#connection-status').text('Arduino veri akışı başlatıldı');
+                    $('#status-box').removeClass('inactive-collection').addClass('active-collection');
+                } else {
+                    $('#connection-status').text('Arduino veri akışı durduruldu');
+                    $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+                }
+            })
+            .catch(error => console.error('Hata:', error)); // Burada noktalı virgül yerine nokta doğru
+        }
+        
+        
+        // Grafik oluşturma fonksiyonu
+        function createChart() {
+            const ctx = document.getElementById('dataChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: chartLabels,
+                    datasets: [
+                        {
+                            label: 'ADC Değeri',
+                            data: adcData,
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1,
+                            yAxisID: 'y'
+                        },
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Zaman'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'ADC Değeri'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Kapasite (nF)'
+                            },
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        $(document).ready(function() {
+            // Durumu kontrol et
+            $.ajax({
+                url: '/api/status/',
+                method: 'GET',
+                success: function(response) {
+                    if (response.is_collecting) {
+                        $('#connection-status').text(response.status || 'Veri toplanıyor');
+                        $('#status-box').removeClass('inactive-collection').addClass('active-collection');
+                        
+                        // Veri toplama başlat
+                        $('#start-api-btn').click();
+                    } else {
+                        $('#connection-status').text(response.status || 'Veri toplama durduruldu');
+                        $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+                    }
+                },
+                error: function() {
+                    $('#connection-status').text('Bağlantı yok');
+                    $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+                }
+            });
+        });
+        // Verileri güncelleme fonksiyonu
+// Verileri güncelleme fonksiyonu
+function updateData() {
+    const apiUrl = $('#api-url').val();
+    
+    $.ajax({
+        url: apiUrl,
+        method: 'GET',
+        success: function(response) {
+            // API'den dönen veri türünü kontrol edelim
+            console.log("API yanıtı:", response);
+            
+            // Veri dizisini doğru şekilde alalım
+            let dataArray = response;
+            if (!Array.isArray(dataArray)) {
+                if (dataArray.results && Array.isArray(dataArray.results)) {
+                    dataArray = dataArray.results;
+                } else {
+                    console.error("API'den dönen veri bir dizi değil:", dataArray);
+                    return;
+                }
+            }
+            
+            // Veri yoksa işlemi sonlandır
+            if (dataArray.length === 0) {
+                $('#data-table').html('<tr><td colspan="3" class="text-center">Henüz veri yok</td></tr>');
+                $('#last-adc').text("-");
+                $('#avg-adc').text("-");
+                return;
+            }
+            
+            // En son 50 veriyi alıyoruz
+            const latestData = dataArray.slice(0, 50);
+            
+            // Verileri en son kaydedilen en üstte olacak şekilde sıralıyoruz
+            latestData.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            
+            // Tablo verilerini güncellemeden önce temizliyoruz
+            const tableBody = $('#data-table');
+            tableBody.empty();
+            
+            let sumAdc = 0;
+            
+            latestData.forEach(function(data) {
+                const date = new Date(data.timestamp);
+                const formattedDate = date.toLocaleString();
+                
+                // ADC değerini sayıya çevirme
+                const adcValue = typeof data.adc_value === 'string' ? 
+                    parseInt(data.adc_value) : data.adc_value;
+                
+                sumAdc += adcValue;
+                
+                tableBody.append(`
+                    <tr>
+                        <td>${data.id}</td>
+                        <td>${adcValue}</td>
+                        <td>${formattedDate}</td>
+                    </tr>
+                `);
+            });
+            
+            // Grafik verilerini güncelleyelim
+            // Önce grafik verilerini temizleyelim
+            chartLabels.length = 0;
+            adcData.length = 0;
+            
+            // Grafik için verileri zaman sıralamasına göre düzenleyelim (eski -> yeni)
+            const sortedData = [...latestData].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            
+            sortedData.forEach(function(data) {
+                const date = new Date(data.timestamp);
+                chartLabels.push(date.toLocaleTimeString());
+                
+                // ADC değerini sayıya çevirme
+                const adcValue = typeof data.adc_value === 'string' ? 
+                    parseInt(data.adc_value) : data.adc_value;
+                
+                adcData.push(adcValue);
+            });
+            
+            // Grafiği güncelle veya oluştur
+            if (chart) {
+                chart.update();
+            } else {
+                createChart();
+            }
+            
+            // İstatistik panellerini güncelle
+            if (latestData.length > 0) {
+                const lastData = latestData[0]; // En son veri
+                
+                // ADC değerini sayıya çevirme
+                const lastAdcValue = typeof lastData.adc_value === 'string' ? 
+                    parseInt(lastData.adc_value) : lastData.adc_value;
+                
+                $('#last-adc').text(lastAdcValue);
+                
+                const avgAdc = (sumAdc / latestData.length).toFixed(2);
+                $('#avg-adc').text(avgAdc);
+            }
+        },
+        error: function(error) {
+            console.error('Veri alınamadı:', error);
+            $('#connection-status').text('Veri alınamadı: ' + error.statusText);
+            $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+        }
+    });
+}
+
+
+        
+        // API veri toplamayı başlat
+        $('#start-api-btn').click(function() {
+            if (isCollectingData) {
+                alert('Veri toplama zaten devam ediyor!');
+                return;
+            }
+            
+            // Güncelleme aralığını al
+            updateIntervalMs = parseInt($('#update-interval').val());
+            
+            // İlk veri güncellemesini yap
+            updateData();
+            
+            // Periyodik güncelleme için interval başlat
+            dataCollectionInterval = setInterval(updateData, updateIntervalMs);
+            
+            // Durum değişkenini güncelle
+            isCollectingData = true;
+            
+            // Durum göstergesini güncelle
+            $('#connection-status').text('API üzerinden veri toplanıyor');
+            $('#status-box').removeClass('inactive-collection').addClass('active-collection');
+        });
+        
+        // API veri toplamayı durdur
+        $('#stop-api-btn').click(function() {
+            if (!isCollectingData) {
+                alert('Veri toplama zaten durdurulmuş!');
+                return;
+            }
+            
+            // Interval'i temizle
+            clearInterval(dataCollectionInterval);
+            
+            // Durum değişkenini güncelle
+            isCollectingData = false;
+            
+            // Durum göstergesini güncelle
+            $('#connection-status').text('Veri toplama durduruldu');
+            $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+        });
+        
+        // Rastgele veri üretmeyi başlat
+        $('#start-random-btn').click(function() {
+            $.ajax({
+                url: '/api/start-random/',
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf_token },
+                success: function(response) {
+                    alert(response.status || 'Rastgele veri üretimi başlatıldı');
+                    $('#connection-status').text('Rastgele veri üretiliyor');
+                    $('#status-box').removeClass('inactive-collection').addClass('active-collection');
+                    
+                    // Eğer veri toplama aktif değilse, başlat
+                    if (!isCollectingData) {
+                        $('#start-api-btn').click();
+                    }
+                },
+                error: function(error) {
+                    console.error('Hata:', error);
+                    alert('Hata: ' + (error.responseJSON ? JSON.stringify(error.responseJSON) : error.statusText));
+                }
+            });
+        });
+        
+        // Rastgele veri üretmeyi durdur
+        $('#stop-random-btn').click(function() {
+            $.ajax({
+                url: '/api/stop-random/',
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf_token },
+                success: function(response) {
+                    alert(response.status || 'Rastgele veri üretimi durduruldu');
+                    $('#connection-status').text('Rastgele veri üretimi durduruldu');
+                    $('#status-box').removeClass('active-collection').addClass('inactive-collection');
+                },
+                error: function(error) {
+                    console.error('Hata:', error);
+                    alert('Hata: ' + (error.responseJSON ? JSON.stringify(error.responseJSON) : error.statusText));
+                }
+            });
+        });
+        
+        // Sayfa yüklendiğinde çalışacak kod
+        
+    </script>
+</div>
+</body>
+</html>
